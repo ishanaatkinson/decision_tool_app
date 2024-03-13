@@ -1,0 +1,311 @@
+---
+title: "PMC Modelling"
+output: html_document
+runtime: shiny
+description: >
+  Investigate the potential impact of PMC. 
+---
+
+
+
+```{r echo=FALSE}
+###### LOAD PACKAGES AND SET WD #####
+
+library(pacman)
+p_load(malariasimulation, foreSIGHT, malariaEquilibrium, tidyr, dplyr, ggplot2,
+       reshape2, ggpubr, gridExtra, readxl, stringi, scene, XML, maps, readr,
+       here, sf, magrittr, scatterpie, shiny)
+
+
+# CHANGE
+setwd("C:/Users/IshanaAtkinson/OneDrive - London School of Hygiene and Tropical Medicine/Documents/Decision tool app - test")
+
+
+```
+
+
+
+```{r echo = FALSE}
+##### SELECT INPUTS RELATING TO COUNTRY/ADMIN1 AREA #####
+selectInput(inputId = "country", label = "Country",
+            choices = c("CMR", "MOZ"),
+            selected = "CMR")
+
+selectInput(inputId = "country_or_area", label = "Model whole country or admin-1 unit?",
+            choices = c("Whole country", "Admin-1 unit"),
+            selected = "Whole country")
+
+conditionalPanel("input.country_or_area!='Whole country'",
+                 selectInput(inputId = "area", label = "Admin-1 unit",
+                             choices = c(),
+                             selected = c()))
+      
+```
+
+```{r echo=FALSE}
+##### SELECT INPUT RELATING TO PMC SCHEDULE AGES AND COVERAGE #####
+
+selectInput(inputId = "default_or_choose", label = "Choose PMC schedule and coverage or run default?",
+            choices = c("Run default", "Choose manually"),
+            selected = "Run default")
+
+conditionalPanel("input.default_or_choose!='Run default'",
+                 numericInput(inputId = "number_of_doses", label = "Select number of PMC doses to model", value=0, min=0,max=8))
+
+# Placeholder for dynamic numeric inputs
+# conditionalPanel("input.number_of_doses > 0",
+#                  uiOutput("dynamic_inputs")
+#                  
+# )
+
+
+output$dynamic_table <- DT::renderDT({
+  if (input$default_or_choose == "Choose manually") {
+    data_df <- data()
+    DT::datatable(data_df, editable = TRUE, caption = "Please list the age at which PMC doses are given in weeks and the associated coverage values given within a range 0-1.")
+  }
+})
+
+DT::DTOutput("dynamic_table")
+
+```
+
+```{r echo=FALSE}
+##### ADD GRAPH BUTTON #####
+actionButton("add_table", "Add data")
+actionButton("add_graph", "Add Graph")
+
+
+```
+
+``` {r echo=FALSE}
+##### ADD ADMIN1 UNIT NAMES IF USER WANTS TO MODEL ADMIN1 SEPARATELY #####
+observeEvent(input$country, {
+  country <- input$country
+  chosen_area <- input$area 
+  
+  updateSelectInput(session,
+                    "area",
+                    choices = unique(stri_trans_general(str=gsub(" ", "_", (stri_trans_general(str=gsub("_", "_", (readRDS(paste0(getwd(), "/", country, "/", country, ".rds")))$sites$name_1), id = "Latin-ASCII"))), id = "Latin-ASCII"))
+
+                    
+  )
+})
+
+```
+
+
+```{r echo=FALSE}
+##### ADD INPUTS RELATING TO PMC SCHEDULE AND COVERAGE #####
+
+data<-reactiveVal(NULL)
+edited_data <- reactiveVal(NULL)
+
+
+
+observeEvent(input$add_table, {
+  if (input$default_or_choose == "Choose manually") {
+    
+    data_df <- data.frame(Age = rep(NA, times = input$number_of_doses), Coverage = rep(NA, times = input$number_of_doses))
+      
+      data(data_df)
+    #   
+    # output$dynamic_table <- DT::renderDT({
+    #   DT::datatable(data_df, editable = TRUE, caption = "Please list the age at which PMC doses are given in weeks and the associated coverage values given within a range 0-1.")
+    # })
+  }
+})
+
+observeEvent(input$dynamic_table_cell_edit, {
+  info <- input$dynamic_table_cell_edit
+  if (!is.null(info$value)) {
+    data_df <- data()
+    
+    data_df[info$row, info$col] <- info$value
+    data(data_df)
+    edited_data(data_df)
+  }
+})
+
+
+```
+
+``` {r echo=FALSE}
+
+##### ADD COUNTRY OR ADMIN1 GRAPH #####
+graph_admin_1 <- eventReactive(input$add_graph, {
+    
+    country <- input$country
+    chosen_area <- input$area
+    
+    if (input$default_or_choose == "Run default") {
+      schedule<-c(10,20,30,40)
+      cov<-c(1,1,1,1)
+    } 
+    
+    if (input$default_or_choose == "Choose manually") {
+    
+    schedule <- as.numeric(edited_data()$Age)
+    cov <- as.numeric(edited_data()$Coverage)
+    }
+    
+    # Check the first column (Age) for values outside the range 0 and 913
+      if (any(schedule < 0) || any(schedule > 130.5)) {
+        cat("Error: Value in the Age column must be between 0 and 130.\n")
+        return(NULL)  # Return NULL to prevent updating the data
+      }
+    
+    
+    # Check the second column (Coverage) for values outside the range 0 and 1
+    if (any(cov < 0) || any(cov > 1)) {
+        cat("Error: Value in the Coverage column must be between 0 and 1.\n")
+        return(NULL)  # Return NULL to prevent updating the data
+      }
+
+    
+    source("test.R", local=TRUE) 
+    
+    colours <- c( "#E16E21","#8FC7C7")
+    
+    if (input$country_or_area == "Admin-1 unit") {
+      
+    colours <- c( "#E16E21","#8FC7C7")
+
+      graph1<- ggplot() +
+  geom_line(aes(x=1:length(age_in_days_midpoint), y=1000*(incidence_ppy_df %>% filter(area == chosen_area, infection_class == "clinical"))$value, colour = "No PMC")) +
+  geom_line(aes(x=1:length(age_in_days_midpoint), y=1000*(PMC_impact_ppy %>% filter(area == chosen_area, infection_class == "clinical"))$value, colour = "PMC"))+
+  scale_color_manual("Incidence", breaks=c("No PMC", "PMC"),
+                     values = colours) + 
+  geom_ribbon(aes(x=1:length(age_in_days_midpoint), ymin=1000*(PMC_impact_ppy %>% filter(area == chosen_area, infection_class == "clinical"))$value,
+                  ymax=1000*(incidence_ppy_df %>% filter(area == chosen_area, infection_class == "clinical"))$value, fill="Cases averted"), alpha=0.3) +
+  
+  geom_segment(aes(x = schedule[schedule < max(age_max)], y=max(1000*(PMC_impact_ppy %>% filter(area == chosen_area, infection_class == "clinical"))$value + 500),
+                   xend = schedule[schedule < max(age_max)], yend=max(1000*(PMC_impact_ppy %>% filter(area == chosen_area, infection_class == "clinical"))$value) + 100)
+               , arrow = arrow(length= unit(0.1, "inches"))) +
+  geom_text(aes(x=schedule[schedule < max(age_max)], label=paste0((cov[1:length(schedule[schedule < max(age_max)])] * 100), "%"), y=max(1000*(PMC_impact_ppy %>% filter(area == chosen_area, infection_class == "clinical"))$value) + 700),
+            colour="black", angle=90, size = 2.25, nudge_y=150) +
+  labs(x="Age (days)", y="New clinical infections per 1000 children",
+       colour = "Incidence", fill="Calculation") +
+  ylim(0, max(1000*(PMC_impact_ppy %>% filter(area == chosen_area, infection_class == "clinical"))$value) + 1200) +
+  scale_x_continuous(breaks = seq(0, 913, by = 90)) + 
+  scale_fill_manual("Calculation", values = colours[2]) +
+  theme(#panel.grid.minor = element_line(colour = "gray", size = 0.2),
+    panel.grid.major = element_line(colour = "gray", linewidth = 0.2),
+    panel.background = element_rect(fill='transparent'), #transparent panel bg
+    plot.background = element_rect(fill='transparent', color=NA), #transparent plot bg
+    legend.background = element_rect(fill='transparent'), #transparent legend bg
+  )
+
+
+graph2<-ggplot() +
+  geom_line(aes(x=1:length(age_in_days_midpoint), y=1000*(incidence_ppy_df %>% filter(area == chosen_area, infection_class == "clinical"))$value, colour = "No PMC")) +
+  geom_line(aes(x=1:length(age_in_days_midpoint), y=1000*(PMC_impact_ppy_additional_doses %>% filter(area == chosen_area, infection_class == "clinical"))$value, colour = "PMC"))+
+  scale_color_manual("Incidence", breaks=c("No PMC", "PMC"),
+                     values = colours) + 
+  geom_ribbon(aes(x=1:length(age_in_days_midpoint), ymin=1000*(PMC_impact_ppy_additional_doses %>% filter(area == chosen_area, infection_class == "clinical"))$value,
+                  ymax=1000*(incidence_ppy_df %>% filter(area == chosen_area, infection_class == "clinical"))$value, fill="Cases averted"), alpha=0.3) +
+  
+  geom_segment(aes(x = schedule_additional_doses[schedule_additional_doses < max(age_max)], y=max(1000*(PMC_impact_ppy_additional_doses %>% filter(area == chosen_area, infection_class == "clinical"))$value + 500),
+                   xend = schedule_additional_doses[schedule_additional_doses < max(age_max)], yend=max(1000*(PMC_impact_ppy_additional_doses %>% filter(area == chosen_area, infection_class == "clinical"))$value) + 100)
+               , arrow = arrow(length= unit(0.1, "inches"))) +
+  geom_text(aes(x=schedule_additional_doses[schedule_additional_doses < max(age_max)], label=paste0((cov_additional_doses[1:length(schedule_additional_doses[schedule_additional_doses < max(age_max)])] * 100), "%"), y=max(1000*(PMC_impact_ppy_additional_doses %>% filter(area == chosen_area, infection_class == "clinical"))$value) + 700),
+            colour="black", angle=90, size = 2.25, nudge_y=150) +
+  labs(x="Age (days)", y="New clinical infections per 1000 children",
+       colour = "Incidence", fill="Calculation") +
+  ylim(0, max(1000*(PMC_impact_ppy_additional_doses %>% filter(area == chosen_area, infection_class == "clinical"))$value) + 1200) +
+  scale_x_continuous(breaks = seq(0, 913, by = 90)) + 
+  scale_fill_manual("Calculation", values = colours[2]) +
+  theme(#panel.grid.minor = element_line(colour = "gray", size = 0.2),
+    panel.grid.major = element_line(colour = "gray", linewidth = 0.2),
+    panel.background = element_rect(fill='transparent'), #transparent panel bg
+    plot.background = element_rect(fill='transparent', color=NA), #transparent plot bg
+    legend.background = element_rect(fill='transparent'), #transparent legend bg
+  )
+
+merged_graphs <- ggarrange(graph1,graph2)
+merged_graphs<- annotate_figure(merged_graphs, top = text_grob(paste0("Average clinical incidence in ", chosen_area, ", ", country, " during ",
+                                                                     length(schedule), " and ", length(schedule_additional_doses), " dose PMC schedules")))
+ 
+print(merged_graphs) 
+
+      }
+    
+    ##### GRAPH FOR WHOLE COUNTRY #####
+    
+    if (input$country_or_area == "Whole country") {
+      
+      colours <- c("#E16E21","#8FC7C7")
+
+      graph3 <- ggplot() +
+        geom_line(aes(x=unique(incidence_ppy_df_whole_country$age_in_days_midpoint), y=1000*(incidence_ppy_df_whole_country$clinical), colour = "No PMC")) + 
+        geom_line(aes(x=unique(PMC_impact_ppy_whole_country$age_in_days_midpoint), y=1000*as.double(PMC_impact_ppy_whole_country$clinical), colour = "PMC"))+
+        scale_color_manual("Incidence", breaks=c("No PMC", "PMC"),
+                                           values = colours) +
+        geom_ribbon(aes(x=unique(incidence_ppy_df_whole_country$age_in_days_midpoint), ymin=1000*as.double(PMC_impact_ppy_whole_country$clinical),
+                        ymax=1000*(incidence_ppy_df_whole_country$clinical), fill="Cases averted"), alpha=0.3) + 
+        
+        geom_segment(aes(x = schedule[schedule < max(age_max)], y=max(1000*(PMC_impact_ppy_whole_country$clinical)) + 500,
+                         xend = schedule[schedule < max(age_max)], yend=max(1000*(PMC_impact_ppy_whole_country$clinical)) + 100),
+                     arrow = arrow(length= unit(0.1, "inches"))) + 
+        geom_text(aes(x=schedule[schedule < max(age_max)], label=paste0((cov[1:length(schedule[schedule < max(age_max)])] * 100), "%"), y=max(1000*(PMC_impact_ppy_whole_country$clinical) + 700)),
+                  colour="black", angle=90, size = 2.25, nudge_y=150) +
+        labs(x="Age (days)", y="New clinical infections per 1000 children",
+             colour = "Incidence", fill="Calculation") +
+        ylim(0, max(1000*(PMC_impact_ppy_whole_country$clinical) + 1200)) + 
+        scale_x_continuous(breaks = seq(0, 913, by = 90)) + 
+  scale_fill_manual("Calculation", values = colours[2]) +
+  theme(#panel.grid.minor = element_line(colour = "gray", size = 0.2),
+    panel.grid.major = element_line(colour = "gray", linewidth = 0.2),
+    panel.background = element_rect(fill='transparent'), #transparent panel bg
+    plot.background = element_rect(fill='transparent', color=NA), #transparent plot bg
+    legend.background = element_rect(fill='transparent'), #transparent legend bg
+  )
+      
+      
+      graph4 <- ggplot() +
+        geom_line(aes(x=unique(incidence_ppy_df_whole_country$age_in_days_midpoint), y=1000*(incidence_ppy_df_whole_country$clinical), colour = "No PMC")) + 
+        geom_line(aes(x=unique(PMC_impact_ppy_additional_doses_whole_country$age_in_days_midpoint), y=1000*as.double(PMC_impact_ppy_additional_doses_whole_country$clinical), colour = "PMC"))+
+        scale_color_manual("Incidence", breaks=c("No PMC", "PMC"),
+                                           values = colours) +
+        geom_ribbon(aes(x=unique(incidence_ppy_df_whole_country$age_in_days_midpoint), ymin=1000*as.double(PMC_impact_ppy_additional_doses_whole_country$clinical),
+                        ymax=1000*(incidence_ppy_df_whole_country$clinical), fill="Cases averted"), alpha=0.3) + 
+        
+        geom_segment(aes(x = schedule_additional_doses[schedule_additional_doses < max(age_max)], y=max(1000*(PMC_impact_ppy_additional_doses_whole_country$clinical)) + 500,
+                         xend = schedule_additional_doses[schedule_additional_doses < max(age_max)], yend=max(1000*(PMC_impact_ppy_additional_doses_whole_country$clinical)) + 100)
+                     , arrow = arrow(length= unit(0.1, "inches"))) + 
+        geom_text(aes(x=schedule_additional_doses[schedule_additional_doses < max(age_max)], label=paste0((cov_additional_doses[1:length(schedule_additional_doses[schedule_additional_doses < max(age_max)])] * 100), "%"), y=max(1000*(PMC_impact_ppy_additional_doses_whole_country$clinical) + 700)),
+                  colour="black", angle=90, size = 2.25, nudge_y=150) +
+        labs(x="Age (days)", y="New clinical infections per 1000 children",
+             colour = "Incidence", fill="Calculation") +
+        ylim(0, max(1000*(PMC_impact_ppy_additional_doses_whole_country$clinical) + 1200)) + 
+        scale_x_continuous(breaks = seq(0, 913, by = 90)) + 
+  scale_fill_manual("Calculation", values = colours[2]) +
+  theme(#panel.grid.minor = element_line(colour = "gray", size = 0.2),
+    panel.grid.major = element_line(colour = "gray", linewidth = 0.2),
+    panel.background = element_rect(fill='transparent'), #transparent panel bg
+    plot.background = element_rect(fill='transparent', color=NA), #transparent plot bg
+    legend.background = element_rect(fill='transparent'), #transparent legend bg
+  )
+      
+      merged_graphs_whole_country <- ggarrange(graph3,graph4, ncol=2, nrow=1)
+      
+      merged_graphs_whole_country<- annotate_figure(merged_graphs_whole_country, top = text_grob(paste0("Average clinical incidence across ", country, " during ", length(schedule), " and ", length(schedule_additional_doses), " dose PMC schedules")))
+      
+    
+      print(merged_graphs_whole_country)
+      
+    }
+    
+  })
+
+
+``` 
+
+``` {r echo=FALSE}
+
+renderPlot({
+    graph_admin_1()
+  })
+
+```
+
