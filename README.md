@@ -3,6 +3,7 @@ The objective of the decision tool is to support policy-makers, programme manage
 
 Back-end:
 The app will incorporate the following in the back-end infrastructure
+- Agent based, age stratified dynamic P.falciparum transmission model
 - Effectiveness of PMC with sulfadoxine pyrimethamine
 - Effective coverage of co-delivered vaccinations
 - Genotype-specific protective efficacy
